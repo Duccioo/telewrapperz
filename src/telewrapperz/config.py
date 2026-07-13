@@ -90,7 +90,7 @@ def load_config():
     if update_interval is None:
         update_interval = DEFAULT_UPDATE_INTERVAL
 
-    if not enable_log and os.environ.get("TELEWRAPPER_ENABLE_LOG"):
-        enable_log = _as_bool(os.environ.get("TELEWRAPPER_ENABLE_LOG"))
+    if not enable_log and os.environ.get("TELEWRAPPERZ_ENABLE_LOG"):
+        enable_log = _as_bool(os.environ.get("TELEWRAPPERZ_ENABLE_LOG"))
 
     return args.command, token, chat_id, update_interval, args.test, enable_log

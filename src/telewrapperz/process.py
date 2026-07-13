@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 import platform
-from telewrapper.logs import process_terminal_output
+from telewrapperz.logs import process_terminal_output
 
 # Rileva sistema operativo
 IS_WINDOWS = platform.system() == "Windows"
@@ -26,7 +26,7 @@ class ProcessManager:
         # Inizializza il file log
         if self.log_file_path:
             with open(self.log_file_path, "w", encoding="utf-8") as f:
-                f.write(f"--- TeleWrapper Log Started ---\nCommand: {self.command}\n\n")
+                f.write(f"--- Telewrapperz Log Started ---\nCommand: {self.command}\n\n")
 
     def _write_to_log_file(self, decoded_text):
         if self.log_file_path:

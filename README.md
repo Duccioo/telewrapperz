@@ -1,4 +1,4 @@
-# 🤖 TeleWrapper
+# 🤖 Telewrapperz
 
 > **Remote command monitoring made simple** — Execute any command and get real-time updates directly on Telegram with live system stats.
 
@@ -58,7 +58,7 @@ export TELEGRAM_CHAT_ID="your_chat_id_here"
 ### Option 2: Command Line Arguments
 
 ```bash
-telewrapper --token "your_token" --chat_id "your_chat_id" "your_command"
+telewrapperz --token "your_token" --chat_id "your_chat_id" "your_command"
 ```
 
 ### Option 3: Config File (YAML or INI)
@@ -90,7 +90,7 @@ enable_log = true
 You can also enable persistent log files with an environment variable:
 
 ```bash
-export TELEWRAPPER_ENABLE_LOG=true
+export TELEWRAPPERZ_ENABLE_LOG=true
 ```
 
 ---
@@ -101,16 +101,16 @@ export TELEWRAPPER_ENABLE_LOG=true
 
 ```bash
 # Run any command
-telewrapper "python train.py"
+telewrapperz "python train.py"
 
 # Run a long-running script
-telewrapper "python -u my_training_script.py --epochs 100"
+telewrapperz "python -u my_training_script.py --epochs 100"
 
 # Save the full output locally and show a "Download Log" button
-telewrapper --log "python -u my_training_script.py --epochs 100"
+telewrapperz --log "python -u my_training_script.py --epochs 100"
 
 # Test your bot connection
-telewrapper --test
+telewrapperz --test
 ```
 
 ### Progress Bar Demo
@@ -130,10 +130,10 @@ Run it directly:
 python test/long_test.py
 ```
 
-Run it through TeleWrapper:
+Run it through Telewrapperz:
 
 ```bash
-telewrapper --config config.yaml "python test/long_test.py"
+telewrapperz --config config.yaml "python test/long_test.py"
 ```
 
 For live progress demos, keep `settings.update_interval` low, for example `5.0`. Higher values such as `60.0` reduce Telegram traffic but may make short commands appear stuck on the initial `Starting...` message until the next update or the final forced refresh.
@@ -166,7 +166,7 @@ GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 
 ```
 ┌─────────────────────────────────────────────┐
-│                 TeleWrapper                  │
+│                Telewrapperz                  │
 ├─────────────────────────────────────────────┤
 │                                             │
 │  ┌─────────────┐     ┌─────────────────┐   │
@@ -206,12 +206,12 @@ GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 
 ## 💾 Log Files
 
-Full log files are disabled by default unless you pass `--log`, set `settings.enable_log: true`, or export `TELEWRAPPER_ENABLE_LOG=true`.
+Full log files are disabled by default unless you pass `--log`, set `settings.enable_log: true`, or export `TELEWRAPPERZ_ENABLE_LOG=true`.
 
-When enabled, TeleWrapper writes logs to:
+When enabled, Telewrapperz writes logs to:
 
 ```text
-telewrapper_log/telewrapper_YYYYMMDD_HHMMSS.log
+telewrapperz_log/telewrapperz_YYYYMMDD_HHMMSS.log
 ```
 
 The Telegram dashboard also shows a **Scarica Log / Download Log** button while that file exists.
@@ -241,7 +241,7 @@ The Telegram dashboard also shows a **Scarica Log / Download Log** button while 
 - 🖥️ GPU stats only appear if NVIDIA GPU is detected
 - 🔄 Use the **Refresh** button for immediate updates
 - 📈 Progress bars (`tqdm`, `rich`, carriage-return bars, and simple cursor-up dashboards) are handled by the log buffer
-- 🤖 Run only one active TeleWrapper polling instance per Telegram bot token. Telegram will raise `Conflict: terminated by other getUpdates request` if two wrappers poll the same bot at once, which can break inline buttons.
+- 🤖 Run only one active Telewrapperz polling instance per Telegram bot token. Telegram will raise `Conflict: terminated by other getUpdates request` if two wrappers poll the same bot at once, which can break inline buttons.
 
 ---
 

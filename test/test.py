@@ -4,15 +4,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from telewrapper.logs import LogBuffer, process_terminal_output, strip_ansi
-from telewrapper.process import ProcessManager
-from telewrapper.bot import TeleWrapperBot
-from telewrapper.config import load_config
+from telewrapperz.logs import LogBuffer, process_terminal_output, strip_ansi
+from telewrapperz.process import ProcessManager
+from telewrapperz.bot import TeleWrapperzBot
+from telewrapperz.config import load_config
 
 
 def section(title):
@@ -89,14 +89,14 @@ def test_dashboard_blank_log_fallback():
         log_buffer = LogBuffer()
 
     process_terminal_output(DummyProcess.log_buffer, "\r\n\r\n")
-    bot = TeleWrapperBot("token", "chat", "python test.py", DummyProcess(), DummyMonitor(), 5)
+    bot = TeleWrapperzBot("token", "chat", "python test.py", DummyProcess(), DummyMonitor(), 5)
     text = bot.build_dashboard_text()
     assert "Starting..." in text
 
 
 def test_config_enable_log_from_yaml():
     original_argv = sys.argv[:]
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml") as f:
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         f.write(
             "telegram:\n"
             "  token: token\n"
@@ -106,11 +106,14 @@ def test_config_enable_log_from_yaml():
             "  enable_log: true\n"
         )
         f.flush()
-        sys.argv = ["telewrapper", "--config", f.name, "python test.py"]
-        try:
-            command, token, chat_id, interval, is_test, enable_log = load_config()
-        finally:
-            sys.argv = original_argv
+        config_path = f.name
+
+    sys.argv = ["telewrapperz", "--config", config_path, "python test.py"]
+    try:
+        command, token, chat_id, interval, is_test, enable_log = load_config()
+    finally:
+        sys.argv = original_argv
+        Path(config_path).unlink()
 
     assert command == "python test.py"
     assert token == "token"
@@ -141,7 +144,7 @@ async def run_async_case(name, fn):
 
 
 def main():
-    section("TeleWrapper local smoke tests")
+    section("Telewrapperz local smoke tests")
     print(f"Python: {sys.version.split()[0]}")
     print(f"Platform: {sys.platform}")
     print(f"Repo: {ROOT}")

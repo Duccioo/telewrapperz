@@ -8,10 +8,10 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest, RetryAfter, NetworkError, TimedOut
-from telewrapper.logs import strip_ansi, MAX_LOG_LINES
+from telewrapperz.logs import strip_ansi, MAX_LOG_LINES
 
 
-class TeleWrapperBot:
+class TeleWrapperzBot:
     def __init__(
         self, token, chat_id, command, process_manager, system_monitor, update_interval, log_file_path=None
     ):

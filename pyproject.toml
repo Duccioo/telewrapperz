@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "telewrapper"
+name = "telewrapperz"
 version = "0.1.0"
 description = "Remote command wrapper and monitoring tool for Telegram"
 readme = "README.md"
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-telewrapper = "telewrapper.cli:entry_point"
+telewrapperz = "telewrapperz.cli:entry_point"
 
 [project.urls]
 Homepage = "https://github.com/duccioo/telewrapper"

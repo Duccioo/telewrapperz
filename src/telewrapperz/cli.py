@@ -6,16 +6,16 @@ from collections import deque
 from telegram.ext import Application, CallbackQueryHandler
 from telegram.constants import ParseMode
 
-from telewrapper.config import load_config
-from telewrapper.logs import LogBuffer
-from telewrapper.system_stats import SystemMonitor
-from telewrapper.process import ProcessManager
-from telewrapper.bot import TeleWrapperBot
+from telewrapperz.config import load_config
+from telewrapperz.logs import LogBuffer
+from telewrapperz.system_stats import SystemMonitor
+from telewrapperz.process import ProcessManager
+from telewrapperz.bot import TeleWrapperzBot
 
 
 async def run_test_mode(token, chat_id):
     """Esegue un test rapido delle funzionalità del bot."""
-    print("🔵 Avvio test funzionalità Telewrapper...")
+    print("🔵 Avvio test funzionalità Telewrapperz...")
     try:
         # Inizializza Application
         app = Application.builder().token(token).build()
@@ -29,7 +29,7 @@ async def run_test_mode(token, chat_id):
             # 1. Test Invio Messaggio
             print("📨 Invio messaggio di test a Telegram...")
             msg_text = (
-                "🔔 <b>Telewrapper Test</b>\n\n"
+                "🔔 <b>Telewrapperz Test</b>\n\n"
                 "Se leggi questo messaggio, il bot funziona correttamente!\n"
                 "Sto verificando le statistiche di sistema..."
             )
@@ -85,17 +85,17 @@ async def main():
 
     log_file_path = None
     if enable_log:
-        log_dir = "telewrapper_log"
+        log_dir = "telewrapperz_log"
         os.makedirs(log_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file_path = os.path.join(log_dir, f"telewrapper_{timestamp}.log")
+        log_file_path = os.path.join(log_dir, f"telewrapperz_{timestamp}.log")
         print(f"Logging output to: {log_file_path}")
 
     # Setup components
     log_buffer = LogBuffer()
     system_monitor = SystemMonitor()
     process_manager = ProcessManager(command, os.getcwd(), log_buffer, log_file_path=log_file_path)
-    bot = TeleWrapperBot(token, chat_id, command, process_manager, system_monitor, update_interval, log_file_path=log_file_path)
+    bot = TeleWrapperzBot(token, chat_id, command, process_manager, system_monitor, update_interval, log_file_path=log_file_path)
 
     app = Application.builder().token(token).build()
     app.add_handler(CallbackQueryHandler(bot.handle_button))
