@@ -138,6 +138,29 @@ telewrapperz --config config.yaml "python test/long_test.py"
 
 For live progress demos, keep `settings.update_interval` low, for example `5.0`. Higher values such as `60.0` reduce Telegram traffic but may make short commands appear stuck on the initial `Starting...` message until the next update or the final forced refresh.
 
+### Temperature Alerts
+
+You can create temperature alerts by wrapping a monitoring command/script with Telewrapperz.
+When the command prints an alert message (or exits with code `1`), you will see it immediately in Telegram and the status will become `❌ Error`.
+
+Example (Linux, NVIDIA GPU alert at 80°C):
+
+```bash
+telewrapperz --log 'bash -lc '"'"'
+while true; do
+  T=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits | head -n1)
+  echo "GPU Temp: ${T}°C"
+  if [ "$T" -ge 80 ]; then
+    echo "🔥 ALERT: GPU temperature threshold exceeded (${T}°C >= 80°C)"
+    exit 1
+  fi
+  sleep 15
+done
+'"'"''
+```
+
+Tip: if you already have a custom monitoring script, run that script through Telewrapperz to receive the same alerts remotely.
+
 ### What You'll See on Telegram
 
 ```
