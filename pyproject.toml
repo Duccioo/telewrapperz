@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telewrapperz"
-version = "0.1.2"
+version = "0.1.5"
 description = "Remote command wrapper and monitoring tool for Telegram"
 readme = "README.md"
 requires-python = ">=3.8"
