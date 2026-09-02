@@ -1,19 +1,34 @@
 import asyncio
-import socket
-import uuid
 import html
 import os
+import socket
+import uuid
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import ContextTypes
-from telegram.error import BadRequest, RetryAfter, NetworkError, TimedOut
-from telewrapperz.logs import strip_ansi, MAX_LOG_LINES
+
+from telewrapperz.logs import MAX_LOG_LINES, strip_ansi
 
 
 class TeleWrapperzBot:
+    CPU_TEMPERATURE_ALERT_THRESHOLD = 90
+
     def __init__(
-        self, token, chat_id, command, process_manager, system_monitor, update_interval, log_file_path=None
+        self,
+        token,
+        chat_id,
+        command,
+        process_manager,
+        system_monitor,
+        update_interval,
+        log_file_path=None,
+        enable_cpu_temperature_alert=True,
+        queue_until=None,
+        queue_check_interval=None,
+        start_process=None,
+        show_disk=False,
     ):
         self.token = token
         self.chat_id = chat_id
@@ -22,6 +37,14 @@ class TeleWrapperzBot:
         self.system_monitor = system_monitor
         self.update_interval = update_interval
         self.log_file_path = log_file_path
+        self.enable_cpu_temperature_alert = enable_cpu_temperature_alert
+        self.cpu_temperature_alert_sent = False
+        self.queue_until = queue_until
+        self.queue_check_interval = queue_check_interval or update_interval
+        self.start_process = start_process
+        self.show_disk = show_disk
+        self.queue_ready = not queue_until
+        self.queue_notification_sent = False
 
         self.hostname = socket.gethostname()
         self.pid = os.getpid()
@@ -58,7 +81,6 @@ class TeleWrapperzBot:
             print(f"Telegram FloodLimit: sleeping {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
         except (NetworkError, TimedOut):
-            # Problemi di rete temporanei, riprova al prossimo ciclo
             pass
         except Exception as e:
             print(f"Telegram Update Error: {e}")
@@ -66,29 +88,33 @@ class TeleWrapperzBot:
         return False
 
     def build_dashboard_text(self):
-        """Costruisce il messaggio di stato."""
-        cpu, mem, gpu_stats = self.system_monitor.get_stats()
-        duration = str(datetime.now() - self.start_time).split(".")[0]
+        """Constructs dashboard message text with live stats and logs."""
+        cpu, mem, cpu_temp, gpu_stats = self.system_monitor.get_stats()
+        now = datetime.now()
+        duration = str(now - self.start_time).split(".")[0]
+        now_time = now.strftime("%H:%M:%S")
+        has_started = getattr(self.process_manager, "has_started", True)
 
-        status_icon = (
-            "🟢 Running"
-            if self.process_manager.is_running
-            else (
-                f"✅ Done (Exit: {self.process_manager.return_code})"
-                if self.process_manager.return_code == 0
-                else f"❌ Error (Exit: {self.process_manager.return_code})"
+        if not has_started:
+            status_icon = (
+                "⏳ Pending Approval"
+                if self.queue_ready
+                else "⏳ Queued"
             )
-        )
+        elif self.process_manager.is_running:
+            status_icon = "🟢 Running"
+        elif self.process_manager.return_code == 0:
+            status_icon = f"✅ Done (Exit: {self.process_manager.return_code})"
+        else:
+            status_icon = f"❌ Error (Exit: {self.process_manager.return_code})"
 
-        # Costruzione Log (Clean ANSI & Escape HTML)
         raw_logs = self.process_manager.log_buffer.get_lines().rstrip("\n")
         clean_logs = strip_ansi(raw_logs)
         logs = html.escape(clean_logs)
 
         if not clean_logs.strip():
-            logs = "Starting..."
+            logs = "Waiting to start..." if not has_started else "Starting..."
 
-        # Escape other fields per sicurezza HTML
         safe_hostname = html.escape(self.hostname)
         safe_command = html.escape(self.command)
         safe_gpu_stats = html.escape(gpu_stats) if gpu_stats else ""
@@ -98,14 +124,32 @@ class TeleWrapperzBot:
             f"⚙️ <code>{safe_command}</code>\n\n"
             f"Status: {status_icon}\n"
             f"Time: {duration}\n"
+            f"Last Update: {now_time}\n"
             f"CPU: {cpu}% | RAM: {mem}%\n"
         )
+        if self.show_disk:
+            metrics = (
+                self.system_monitor.get_metrics()
+                if hasattr(self.system_monitor, "get_metrics")
+                else {}
+            )
+            disk_info = metrics.get("disk_info")
+            if disk_info:
+                header += f"{html.escape(disk_info)}\n"
+        if cpu_temp is not None:
+            header += f"CPU Temp: {cpu_temp:.0f}°C\n"
         if safe_gpu_stats:
             header += f"<code>{safe_gpu_stats}</code>\n"
 
         header += f"\n📜 <b>Recent Log (Last {MAX_LOG_LINES}):</b>\n"
+        if self.queue_until and not has_started:
+            cond_status = (
+                " (Verified ✅ - Pending approval)"
+                if self.queue_ready
+                else " (Waiting ⏳)"
+            )
+            header += f"⏳ Condition: <code>{html.escape(self.queue_until)}</code>{cond_status}\n"
 
-        # Calcolo spazio disponibile (Telegram limit 4096)
         max_len = 4096
         overhead = len(header) + len("<pre></pre>") + 20
         available_chars = max_len - overhead
@@ -119,11 +163,10 @@ class TeleWrapperzBot:
                 logs = trunc_msg
 
         msg = f"{header}<pre>{logs}</pre>"
-
         return msg
 
     def get_keyboard(self):
-        """Genera la tastiera inline."""
+        """Generates inline keyboard for dashboard."""
         pfx = f"{self.session_id}"
 
         buttons = [
@@ -132,25 +175,140 @@ class TeleWrapperzBot:
 
         if self.log_file_path and os.path.exists(self.log_file_path):
             buttons.append(
-                [InlineKeyboardButton("📄 Scarica Log", callback_data=f"download_log:{pfx}")]
+                [
+                    InlineKeyboardButton(
+                        "📄 Download Log",
+                        callback_data=f"download_log:{pfx}",
+                    )
+                ]
             )
 
-        if self.process_manager.is_running:
+        has_started = getattr(self.process_manager, "has_started", True)
+        if not has_started:
+            if self.queue_ready:
+                buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            "🚀 Approve & Start", callback_data=f"start:{pfx}"
+                        )
+                    ]
+                )
+                buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            "❌ Close Wrapper", callback_data=f"exit:{pfx}"
+                        )
+                    ]
+                )
+            else:
+                buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            "❌ Cancel Queue", callback_data=f"exit:{pfx}"
+                        )
+                    ]
+                )
+        elif self.process_manager.is_running:
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        "🛑 Termina Processo", callback_data=f"kill:{pfx}"
+                        "🛑 Terminate Process", callback_data=f"kill:{pfx}"
                     )
                 ]
             )
         else:
             buttons.append(
-                [InlineKeyboardButton("❌ Chiudi Wrapper", callback_data=f"exit:{pfx}")]
+                [
+                    InlineKeyboardButton(
+                        "❌ Close Wrapper", callback_data=f"exit:{pfx}"
+                    )
+                ]
             )
         return InlineKeyboardMarkup(buttons)
 
+    def get_queue_notification_keyboard(self):
+        """Generates inline keyboard for queue condition approval alert."""
+        pfx = f"{self.session_id}"
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "🚀 Approve & Start", callback_data=f"start:{pfx}"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "❌ Cancel Queue", callback_data=f"exit:{pfx}"
+                    )
+                ],
+            ]
+        )
+
+    async def notify_cpu_temperature(self, bot_api, cpu_temp):
+        if not self.enable_cpu_temperature_alert or cpu_temp is None:
+            return
+        if cpu_temp <= self.CPU_TEMPERATURE_ALERT_THRESHOLD:
+            self.cpu_temperature_alert_sent = False
+            return
+        if self.cpu_temperature_alert_sent:
+            return
+
+        await bot_api.send_message(
+            chat_id=self.chat_id,
+            text=(
+                "⚠️ <b>High CPU Temperature</b>\n\n"
+                f"CPU: {cpu_temp:.0f}°C (threshold: {self.CPU_TEMPERATURE_ALERT_THRESHOLD}°C)"
+            ),
+            parse_mode=ParseMode.HTML,
+        )
+        self.cpu_temperature_alert_sent = True
+
+    async def check_queue_condition(self, bot_api):
+        if (
+            not self.queue_until
+            or self.queue_ready
+            or getattr(self.process_manager, "has_started", True)
+        ):
+            return
+        from telewrapperz.queue import QueueConditionError, condition_is_met
+
+        metrics = (
+            self.system_monitor.get_metrics()
+            if hasattr(self.system_monitor, "get_metrics")
+            else {
+                "cpu": self.system_monitor.get_stats()[0],
+                "memory": self.system_monitor.get_stats()[1],
+            }
+        )
+        try:
+            met = condition_is_met(self.queue_until, metrics)
+        except QueueConditionError as exc:
+            self.queue_ready = True
+            await bot_api.send_message(chat_id=self.chat_id, text=f"❌ {exc}")
+            return
+        if met:
+            self.queue_ready = True
+            if not self.queue_notification_sent:
+                now_time = datetime.now().strftime("%H:%M:%S")
+                safe_cmd = html.escape(self.command)
+                safe_cond = html.escape(self.queue_until)
+                await bot_api.send_message(
+                    chat_id=self.chat_id,
+                    text=(
+                        "🔔 <b>Queue Condition Met</b>\n\n"
+                        "Resources required to execute the command are now available!\n"
+                        f"⚙️ <code>{safe_cmd}</code>\n"
+                        f"⏳ Condition met: <code>{safe_cond}</code>\n"
+                        f"🕒 Last Update: <code>{now_time}</code>\n\n"
+                        "Click the button below to approve and start the command."
+                    ),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=self.get_queue_notification_keyboard(),
+                )
+                self.queue_notification_sent = True
+
     async def telegram_updater(self, app):
-        """Task di background per aggiornare il messaggio dashboard."""
+        """Background task to update dashboard message periodically."""
         try:
             initial_text = self.build_dashboard_text()
             msg = await app.bot.send_message(
@@ -162,15 +320,22 @@ class TeleWrapperzBot:
             self.dashboard_message_id = msg.message_id
             self.last_message_text = initial_text
         except Exception as e:
-            print(f"Errore Telegram Init: {e}")
+            print(f"Telegram Init Error: {e}")
             return
 
         while True:
-            await asyncio.sleep(self.update_interval)
+            await asyncio.sleep(
+                self.queue_check_interval
+                if not self.queue_ready
+                else self.update_interval
+            )
             if self.shutdown_signal:
                 break
 
             try:
+                _, _, cpu_temp, _ = self.system_monitor.get_stats()
+                await self.check_queue_condition(app.bot)
+                await self.notify_cpu_temperature(app.bot, cpu_temp)
                 if self.dashboard_message_id:
                     await self.update_dashboard_message(app.bot)
 
@@ -178,11 +343,12 @@ class TeleWrapperzBot:
                 break
             except Exception as e:
                 print(f"Critical Loop Error: {e}")
-                await asyncio.sleep(1) # Prevent tight crash loop
+                await asyncio.sleep(1)
 
-    async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_button(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         query = update.callback_query
-        # print(f"DEBUG: Button clicked: {query.data}")
 
         try:
             data = query.data.split(":")
@@ -190,13 +356,42 @@ class TeleWrapperzBot:
             target_session = data[1]
 
             if target_session != self.session_id:
-                print(f"DEBUG: Session mismatch: {target_session} != {self.session_id}")
-                await query.answer("Sessione scaduta o non valida", show_alert=True)
+                await query.answer(
+                    "Session expired or invalid", show_alert=True
+                )
                 return
 
             await query.answer()
 
             if action == "refresh":
+                await self.update_dashboard_message(context.bot, force=True)
+
+            elif action == "start":
+                if getattr(self.process_manager, "has_started", True):
+                    await query.answer(
+                        "Command already started", show_alert=True
+                    )
+                    return
+                if not self.queue_ready:
+                    await query.answer(
+                        "Resources not yet available", show_alert=True
+                    )
+                    return
+                if self.start_process:
+                    await self.start_process()
+                if (
+                    query.message
+                    and query.message.message_id != self.dashboard_message_id
+                ):
+                    try:
+                        safe_cmd = html.escape(self.command)
+                        now_time = datetime.now().strftime("%H:%M:%S")
+                        await query.edit_message_text(
+                            f"✅ <b>Command approved and started!</b>\n⚙️ <code>{safe_cmd}</code>\n🕒 Last Update: <code>{now_time}</code>",
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        pass
                 await self.update_dashboard_message(context.bot, force=True)
 
             elif action == "kill":
@@ -209,13 +404,13 @@ class TeleWrapperzBot:
                         await context.bot.send_document(
                             chat_id=self.chat_id,
                             document=f,
-                            filename=os.path.basename(self.log_file_path)
+                            filename=os.path.basename(self.log_file_path),
                         )
 
             elif action == "exit":
                 self.shutdown_signal = True
                 await query.edit_message_text(
-                    f"🛑 Wrapper su {self.hostname} terminato."
+                    f"🛑 Wrapper on {self.hostname} terminated."
                 )
         except Exception as e:
             print(f"ERROR in handle_button: {e}")

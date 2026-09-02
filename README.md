@@ -21,6 +21,8 @@
 | 🖥️ **Cross-Platform** | Works on Windows, macOS, and Linux |
 | 📈 **Progress Bar Support** | Smart handling of `tqdm` and `rich` progress bars, with proper terminal emulation |
 | 💾 **Log Saving** | Use `--log` to automatically save the full command output locally and download it via Telegram |
+| ⏳ **Queue Mode** | Hold a command until CPU/RAM/VRAM/Disk meets a condition, then notify with a launch button |
+| 💽 **Disk Monitoring** | View available disk space on the dashboard with `--show-disk` |
 
 ---
 
@@ -74,6 +76,10 @@ telegram:
 settings:
   update_interval: 5.0  # seconds between dashboard updates
   enable_log: true      # save full output and enable the Telegram download button
+  enable_cpu_temperature_alert: true  # notify once when CPU exceeds 90°C
+  show_disk: true       # display available disk space on the dashboard
+  queue_until: "ram<80"  # optional: keep the command queued until the condition is true
+  queue_check_interval: 30  # optional seconds between checks
 ```
 
 **INI format** (legacy):
@@ -108,6 +114,12 @@ telewrapperz "python -u my_training_script.py --epochs 100"
 
 # Save the full output locally and show a "Download Log" button
 telewrapperz --log "python -u my_training_script.py --epochs 100"
+
+# Queue until RAM drops below 80%; manual approval required to launch from Telegram
+telewrapperz --queue-until "ram<80" "python -u my_training_script.py --epochs 100"
+
+# Display remaining disk space on the dashboard
+telewrapperz --show-disk "python train.py"
 
 # Test your bot connection
 telewrapperz --test
@@ -146,6 +158,7 @@ For live progress demos, keep `settings.update_interval` low, for example `5.0`.
 
 Status: 🟢 Running
 Time: 1:23:45
+Ultimo update: 12:39:40
 CPU: 45% | RAM: 62%
 GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 
@@ -200,7 +213,10 @@ GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 | `--chat_id` | Telegram Chat ID |
 | `--config` | Path to configuration file |
 | `--log` | Save full command output to a file and enable download button |
+| `--show-disk`, `--disk` | Display remaining disk space on the Telegram dashboard |
 | `--test` | Run a connection test |
+| `--queue-until` | Hold execution until condition is met (e.g. `ram<80`, `cpu<50`, `vram<90`, `disk<80`) |
+| `--queue-check-interval` | Seconds between queue condition checks; defaults to `update_interval` |
 
 ---
 
@@ -214,7 +230,7 @@ When enabled, Telewrapperz writes logs to:
 telewrapperz_log/telewrapperz_YYYYMMDD_HHMMSS.log
 ```
 
-The Telegram dashboard also shows a **Scarica Log / Download Log** button while that file exists.
+The Telegram dashboard also shows a **Download Log** button while that file exists.
 
 ---
 
@@ -262,5 +278,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <p align="center">
-  Made with ❤️ for remote monitoring
+  Made with ❤️ by [@duccioo](https://github.com/duccioo)
 </p>

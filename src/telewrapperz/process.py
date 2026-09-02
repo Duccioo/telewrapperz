@@ -1,13 +1,13 @@
 import asyncio
 import os
-import sys
 import platform
+import sys
 from telewrapperz.logs import process_terminal_output
 
-# Rileva sistema operativo
+# Detect operating system
 IS_WINDOWS = platform.system() == "Windows"
 
-# Moduli Unix-only (PTY per terminal emulation)
+# Unix-only modules (PTY for terminal emulation)
 if not IS_WINDOWS:
     import pty
     import select
@@ -20,10 +20,11 @@ class ProcessManager:
         self.log_buffer = log_buffer
         self.log_file_path = log_file_path
         self.process = None
-        self.is_running = True
+        self.is_running = False
+        self.has_started = False
         self.return_code = None
 
-        # Inizializza il file log
+        # Initialize log file
         if self.log_file_path:
             with open(self.log_file_path, "w", encoding="utf-8") as f:
                 f.write(f"--- Telewrapperz Log Started ---\nCommand: {self.command}\n\n")
@@ -34,14 +35,18 @@ class ProcessManager:
                 f.write(decoded_text)
 
     async def run(self):
-        """Esegue il comando utente e cattura l'output."""
+        """Executes user command and streams output."""
+        if self.has_started:
+            return
+        self.has_started = True
+        self.is_running = True
         if IS_WINDOWS:
             await self._run_process_windows()
         else:
             await self._run_process_unix()
 
     async def _run_process_windows(self):
-        """Implementazione Windows usando subprocess standard con PIPE."""
+        """Windows implementation using subprocess with PIPE."""
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
 
@@ -56,7 +61,7 @@ class ProcessManager:
         async def read_output():
             while True:
                 try:
-                    # Leggi in chunk invece che per riga per non bloccare le progress bar
+                    # Read in chunks to preserve progress bar updates
                     chunk = await self.process.stdout.read(4096)
                     if not chunk:
                         break
@@ -73,11 +78,11 @@ class ProcessManager:
         self.is_running = False
 
     async def _run_process_unix(self):
-        """Implementazione Unix/macOS usando PTY per terminal emulation."""
+        """Unix/macOS implementation using PTY for native terminal emulation."""
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
 
-        # Usa PTY per forzare line-buffered output (simula un terminale reale)
+        # Use PTY for line-buffered terminal emulation
         master_fd, slave_fd = pty.openpty()
 
         try:
@@ -90,14 +95,13 @@ class ProcessManager:
                 env=env,
             )
 
-            # Chiudi il lato slave nel processo padre
+            # Close slave side in parent process
             os.close(slave_fd)
 
-            # Task per attendere la terminazione del processo in background
+            # Background task to wait for process termination
             wait_task = asyncio.create_task(self.process.wait())
 
             while True:
-                # Usa select per non bloccare
                 readable, _, _ = select.select([master_fd], [], [], 0.1)
 
                 if readable:
@@ -113,9 +117,8 @@ class ProcessManager:
                     except OSError:
                         break
 
-                # Controlla se il processo è terminato
                 if wait_task.done():
-                    # Leggi eventuale output rimanente
+                    # Drain remaining output
                     try:
                         while True:
                             readable, _, _ = select.select([master_fd], [], [], 0.1)
@@ -133,7 +136,6 @@ class ProcessManager:
                         pass
                     break
 
-                # Yield per permettere ad altri task di eseguire
                 await asyncio.sleep(0.01)
 
         finally:

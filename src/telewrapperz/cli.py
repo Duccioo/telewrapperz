@@ -3,74 +3,87 @@ import asyncio
 import os
 import sys
 from collections import deque
-from telegram.ext import Application, CallbackQueryHandler
+from datetime import datetime
 from telegram.constants import ParseMode
+from telegram.ext import Application, CallbackQueryHandler
 
+from telewrapperz.bot import TeleWrapperzBot
 from telewrapperz.config import load_config
 from telewrapperz.logs import LogBuffer
-from telewrapperz.system_stats import SystemMonitor
 from telewrapperz.process import ProcessManager
-from telewrapperz.bot import TeleWrapperzBot
+from telewrapperz.system_stats import SystemMonitor
 
 
 async def run_test_mode(token, chat_id):
-    """Esegue un test rapido delle funzionalità del bot."""
-    print("🔵 Avvio test funzionalità Telewrapperz...")
+    """Runs a quick diagnostic test of bot functionality."""
+    print("🔵 Starting Telewrapperz functionality test...")
     try:
-        # Inizializza Application
         app = Application.builder().token(token).build()
-
-        # Inizializza SystemMonitor per testare stats
         monitor = SystemMonitor()
 
         async with app:
             await app.start()
 
-            # 1. Test Invio Messaggio
-            print("📨 Invio messaggio di test a Telegram...")
+            print("📨 Sending test message to Telegram...")
             msg_text = (
                 "🔔 <b>Telewrapperz Test</b>\n\n"
-                "Se leggi questo messaggio, il bot funziona correttamente!\n"
-                "Sto verificando le statistiche di sistema..."
+                "If you see this message, the bot is working properly!\n"
+                "Checking system statistics..."
             )
             await app.bot.send_message(
                 chat_id=chat_id, text=msg_text, parse_mode=ParseMode.HTML
             )
-            print("✅ Messaggio inviato.")
+            print("✅ Message sent.")
 
-            # 2. Test Statistiche
-            print("📊 Verifica statistiche di sistema...")
-            cpu, mem, gpu = monitor.get_stats()
+            print("📊 Checking system statistics...")
+            metrics = monitor.get_metrics()
+            cpu = metrics["cpu"]
+            mem = metrics["memory"]
+            cpu_temp = metrics["cpu_temp"]
+            gpu = metrics["gpu_info"]
+            disk_info = metrics["disk_info"]
+
             stats_msg = (
-                f"✅ <b>Test Completato</b>\n\n"
+                f"✅ <b>Test Completed</b>\n\n"
                 f"CPU: {cpu}%\n"
                 f"RAM: {mem}%\n"
-                f"GPU: {gpu if gpu else 'Non rilevata/Disponibile'}"
+                f"{disk_info}\n"
+                f"CPU Temp: {f'{cpu_temp:.0f}°C' if cpu_temp is not None else 'Not available'}\n"
+                f"GPU: {gpu if gpu else 'Not detected/Available'}"
             )
-            print(f"   CPU: {cpu}%, RAM: {mem}%, GPU: {gpu}")
+            print(f"   CPU: {cpu}%, RAM: {mem}%, {disk_info}, CPU Temp: {cpu_temp}, GPU: {gpu}")
 
             await app.bot.send_message(
                 chat_id=chat_id, text=stats_msg, parse_mode=ParseMode.HTML
             )
-            print("✅ Statistiche inviate.")
+            print("✅ Statistics sent.")
 
             await app.stop()
             monitor.close()
 
-        print("🟢 Test completato con successo!")
+        print("🟢 Test completed successfully!")
 
     except Exception as e:
-        print(f"❌ ERRORE durante il test: {e}")
+        print(f"❌ ERROR during test: {e}")
         sys.exit(1)
 
 
-from datetime import datetime
-
 async def main():
-    command, token, chat_id, update_interval, is_test, enable_log = load_config()
+    (
+        command,
+        token,
+        chat_id,
+        update_interval,
+        is_test,
+        enable_log,
+        enable_cpu_temperature_alert,
+        queue_until,
+        queue_check_interval,
+        show_disk,
+    ) = load_config()
 
     if not token or not chat_id:
-        print("Errore: Token e Chat ID sono obbligatori (via CLI, Config o ENV).")
+        print("Error: Token and Chat ID are required (via CLI, Config, or ENV).")
         sys.exit(1)
 
     if is_test:
@@ -78,7 +91,7 @@ async def main():
         return
 
     if not command:
-        print("Errore: Devi specificare un comando da eseguire (o usare --test).")
+        print("Error: You must specify a command to execute (or use --test).")
         sys.exit(1)
 
     print(f"Starting Wrapper for: {command} (update interval: {update_interval}s)")
@@ -91,11 +104,32 @@ async def main():
         log_file_path = os.path.join(log_dir, f"telewrapperz_{timestamp}.log")
         print(f"Logging output to: {log_file_path}")
 
-    # Setup components
     log_buffer = LogBuffer()
     system_monitor = SystemMonitor()
-    process_manager = ProcessManager(command, os.getcwd(), log_buffer, log_file_path=log_file_path)
-    bot = TeleWrapperzBot(token, chat_id, command, process_manager, system_monitor, update_interval, log_file_path=log_file_path)
+    process_manager = ProcessManager(
+        command, os.getcwd(), log_buffer, log_file_path=log_file_path
+    )
+    process_task = None
+
+    async def start_process():
+        nonlocal process_task
+        if process_task is None:
+            process_task = asyncio.create_task(process_manager.run())
+
+    bot = TeleWrapperzBot(
+        token,
+        chat_id,
+        command,
+        process_manager,
+        system_monitor,
+        update_interval,
+        log_file_path=log_file_path,
+        enable_cpu_temperature_alert=enable_cpu_temperature_alert,
+        queue_until=queue_until,
+        queue_check_interval=queue_check_interval,
+        start_process=start_process,
+        show_disk=show_disk,
+    )
 
     app = Application.builder().token(token).build()
     app.add_handler(CallbackQueryHandler(bot.handle_button))
@@ -109,12 +143,11 @@ async def main():
             if bot.dashboard_message_id or updater_task.done():
                 break
             await asyncio.sleep(0.1)
-        
-        # Start process
-        await process_manager.run()
+
+        if not queue_until:
+            await start_process()
         await bot.update_dashboard_message(app.bot, force=True)
 
-        # Wait for shutdown signal (from bot or process completion)
         while not bot.shutdown_signal:
             await asyncio.sleep(1)
 
@@ -129,7 +162,7 @@ def entry_point():
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrotto manualmente.")
+        print("\nInterrupted manually.")
 
 
 if __name__ == "__main__":
