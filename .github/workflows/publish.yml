@@ -35,29 +35,15 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
-      - name: Check if tag already exists
-        id: check_tag
-        run: |
-          TAG="v${{ steps.get_version.outputs.version }}"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG exists already, skipping publish."
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Install build dependencies
-        if: steps.check_tag.outputs.exists == 'false'
         run: |
           python -m pip install --upgrade pip
           pip install build
 
       - name: Build package
-        if: steps.check_tag.outputs.exists == 'false'
         run: python -m build
 
-      - name: Create GitHub Release
-        if: steps.check_tag.outputs.exists == 'false'
+      - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v${{ steps.get_version.outputs.version }}"
@@ -67,6 +53,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to PyPI 📦
-        if: steps.check_tag.outputs.exists == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
 
