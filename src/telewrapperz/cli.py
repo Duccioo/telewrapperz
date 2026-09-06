@@ -80,6 +80,7 @@ async def main():
         queue_until,
         queue_check_interval,
         show_disk,
+        notify_on_completion,
     ) = load_config()
 
     if not token or not chat_id:
@@ -110,11 +111,17 @@ async def main():
         command, os.getcwd(), log_buffer, log_file_path=log_file_path
     )
     process_task = None
+    app = Application.builder().token(token).build()
+
+    async def run_and_notify():
+        await process_manager.run()
+        await bot.notify_completion(app.bot)
+        await bot.update_dashboard_message(app.bot, force=True)
 
     async def start_process():
         nonlocal process_task
         if process_task is None:
-            process_task = asyncio.create_task(process_manager.run())
+            process_task = asyncio.create_task(run_and_notify())
 
     bot = TeleWrapperzBot(
         token,
@@ -129,9 +136,9 @@ async def main():
         queue_check_interval=queue_check_interval,
         start_process=start_process,
         show_disk=show_disk,
+        enable_completion_notification=notify_on_completion,
     )
 
-    app = Application.builder().token(token).build()
     app.add_handler(CallbackQueryHandler(bot.handle_button))
 
     async with app:
@@ -153,6 +160,8 @@ async def main():
 
         await app.updater.stop()
         updater_task.cancel()
+        if process_task and not process_task.done():
+            process_task.cancel()
         await app.stop()
 
     system_monitor.close()

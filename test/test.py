@@ -145,6 +145,7 @@ def test_config_enable_log_from_yaml():
             queue_until,
             queue_check_interval,
             show_disk,
+            notify_on_completion,
         ) = load_config()
     finally:
         sys.argv = original_argv
@@ -160,6 +161,7 @@ def test_config_enable_log_from_yaml():
     assert enable_cpu_temperature_alert is False
     assert queue_until is None
     assert queue_check_interval == 7
+    assert notify_on_completion is True
 
 
 def test_queue_condition_single():
@@ -385,6 +387,184 @@ async def test_bot_queue_lifecycle():
     assert "Command already started" in query2.alerts
 
 
+def test_config_notify_on_completion_flag_and_yaml():
+    original_argv = sys.argv[:]
+    # Test --no-notify flag
+    sys.argv = ["telewrapperz", "--token", "tok", "--chat_id", "123", "--no-notify", "cmd"]
+    try:
+        cfg = load_config()
+        assert cfg[10] is False
+    finally:
+        sys.argv = original_argv
+
+    # Test YAML notify_on_completion: false
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        f.write(
+            "telegram:\n"
+            "  token: tok\n"
+            "  chat_id: '123'\n"
+            "settings:\n"
+            "  notify_on_completion: false\n"
+        )
+        f.flush()
+        yaml_path = f.name
+    sys.argv = ["telewrapperz", "--config", yaml_path, "cmd"]
+    try:
+        cfg = load_config()
+        assert cfg[10] is False
+    finally:
+        sys.argv = original_argv
+        Path(yaml_path).unlink()
+
+
+async def test_bot_notify_completion_success():
+    class DummyMonitor:
+        def get_stats(self):
+            return (1.0, 2.0, 42.0, "")
+
+    class DummyProcess:
+        has_started = True
+        is_running = False
+        return_code = 0
+        log_buffer = LogBuffer()
+
+    class DummyBotApi:
+        def __init__(self):
+            self.messages = []
+            self.documents = []
+
+        async def send_message(self, **kwargs):
+            self.messages.append(kwargs)
+            return type("Msg", (), {"message_id": len(self.messages)})()
+
+        async def send_document(self, **kwargs):
+            self.documents.append(kwargs)
+
+    proc = DummyProcess()
+    process_terminal_output(proc.log_buffer, "Step 1\nDone!\n")
+    bot = TeleWrapperzBot(
+        "token", "chat", "python train.py", proc, DummyMonitor(), 5
+    )
+    api = DummyBotApi()
+
+    assert bot.completion_notification_sent is False
+    success = await bot.notify_completion(api)
+    assert success is True
+    assert bot.completion_notification_sent is True
+    assert len(api.messages) == 1
+    assert len(api.documents) == 0
+
+    msg = api.messages[0]
+    assert "Job Completed Successfully!" in msg["text"]
+    assert "Exit: 0" in msg["text"]
+    assert "python train.py" in msg["text"]
+    assert "Done!" in msg["text"]
+    assert "Duration:" in msg["text"]
+    assert "Finished at:" in msg["text"]
+    assert msg["reply_markup"] is not None
+
+    # Calling again does not resend
+    success_second = await bot.notify_completion(api)
+    assert success_second is False
+    assert len(api.messages) == 1
+
+
+async def test_bot_notify_completion_failure_with_log():
+    class DummyMonitor:
+        def get_stats(self):
+            return (1.0, 2.0, 42.0, "")
+
+    class DummyProcess:
+        has_started = True
+        is_running = False
+        return_code = 1
+        log_buffer = LogBuffer()
+
+    class DummyBotApi:
+        def __init__(self):
+            self.messages = []
+            self.documents = []
+
+        async def send_message(self, **kwargs):
+            self.messages.append(kwargs)
+            return type("Msg", (), {"message_id": len(self.messages)})()
+
+        async def send_document(self, **kwargs):
+            self.documents.append(kwargs)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as f:
+        f.write("Some failure log trace\n")
+        f.flush()
+        log_path = f.name
+
+    try:
+        proc = DummyProcess()
+        process_terminal_output(proc.log_buffer, "Error: out of memory\n")
+        bot = TeleWrapperzBot(
+            "token",
+            "chat",
+            "python train.py",
+            proc,
+            DummyMonitor(),
+            5,
+            log_file_path=log_path,
+        )
+        api = DummyBotApi()
+
+        success = await bot.notify_completion(api)
+        assert success is True
+        assert bot.completion_notification_sent is True
+        assert len(api.messages) == 1
+        assert len(api.documents) == 1
+
+        msg = api.messages[0]
+        assert "Job Failed!" in msg["text"]
+        assert "Exit: 1" in msg["text"]
+        assert "Error: out of memory" in msg["text"]
+
+        doc = api.documents[0]
+        assert doc["chat_id"] == "chat"
+        assert Path(log_path).name in doc["filename"]
+    finally:
+        Path(log_path).unlink(missing_ok=True)
+
+
+async def test_bot_notify_completion_disabled():
+    class DummyMonitor:
+        def get_stats(self):
+            return (1.0, 2.0, 42.0, "")
+
+    class DummyProcess:
+        has_started = True
+        is_running = False
+        return_code = 0
+        log_buffer = LogBuffer()
+
+    class DummyBotApi:
+        def __init__(self):
+            self.messages = []
+
+        async def send_message(self, **kwargs):
+            self.messages.append(kwargs)
+
+    proc = DummyProcess()
+    bot = TeleWrapperzBot(
+        "token",
+        "chat",
+        "python train.py",
+        proc,
+        DummyMonitor(),
+        5,
+        enable_completion_notification=False,
+    )
+    api = DummyBotApi()
+
+    success = await bot.notify_completion(api)
+    assert success is False
+    assert bot.completion_notification_sent is False
+    assert len(api.messages) == 0
+
+
 def run_case(name, fn):
     try:
         fn()
@@ -422,6 +602,10 @@ def main():
         ("logbuffer_pty_crlf", test_logbuffer_pty_crlf),
         ("dashboard_blank_log_fallback", test_dashboard_blank_log_fallback),
         ("config_enable_log_from_yaml", test_config_enable_log_from_yaml),
+        (
+            "config_notify_on_completion_flag_and_yaml",
+            test_config_notify_on_completion_flag_and_yaml,
+        ),
         ("queue_condition_single", test_queue_condition_single),
         (
             "queue_condition_compound_and_metrics",
@@ -441,6 +625,12 @@ def main():
         ("process_manager_exit_code", test_process_manager_exit_code),
         ("cpu_temperature_alert", test_cpu_temperature_alert),
         ("bot_queue_lifecycle", test_bot_queue_lifecycle),
+        ("bot_notify_completion_success", test_bot_notify_completion_success),
+        (
+            "bot_notify_completion_failure_with_log",
+            test_bot_notify_completion_failure_with_log,
+        ),
+        ("bot_notify_completion_disabled", test_bot_notify_completion_disabled),
     ]:
         total += 1
         if asyncio.run(run_async_case(async_name, async_fn)):

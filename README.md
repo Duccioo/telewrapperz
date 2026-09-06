@@ -23,6 +23,7 @@
 | 💾 **Log Saving** | Use `--log` to automatically save the full command output locally and download it via Telegram |
 | ⏳ **Queue Mode** | Hold a command until CPU/RAM/VRAM/Disk meets a condition, then notify with a launch button |
 | 💽 **Disk Monitoring** | View available disk space on the dashboard with `--show-disk` |
+| 🔔 **Completion Alerts** | Push notification when command finishes (success or failure) with duration, exit code, tail logs, and attached log on failure |
 
 ---
 
@@ -77,6 +78,7 @@ settings:
   update_interval: 5.0  # seconds between dashboard updates
   enable_log: true      # save full output and enable the Telegram download button
   enable_cpu_temperature_alert: true  # notify once when CPU exceeds 90°C
+  notify_on_completion: true  # push notification when command finishes (default: true)
   show_disk: true       # display available disk space on the dashboard
   queue_until: "ram<80"  # optional: keep the command queued until the condition is true
   queue_check_interval: 30  # optional seconds between checks
@@ -91,6 +93,7 @@ chat_id = your_chat_id_here
 [Settings]
 update_interval = 5.0
 enable_log = true
+notify_on_completion = true
 ```
 
 You can also enable persistent log files with an environment variable:
@@ -237,6 +240,8 @@ GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 | `--config` | Path to configuration file |
 | `--log` | Save full command output to a file and enable download button |
 | `--show-disk`, `--disk` | Display remaining disk space on the Telegram dashboard |
+| `--notify-on-completion` | Send push notification when command finishes (enabled by default) |
+| `--no-notify` | Disable push notification when command completes |
 | `--test` | Run a connection test |
 | `--queue-until` | Hold execution until condition is met (e.g. `ram<80`, `cpu<50`, `vram<90`, `disk<80`) |
 | `--queue-check-interval` | Seconds between queue condition checks; defaults to `update_interval` |

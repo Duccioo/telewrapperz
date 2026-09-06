@@ -49,6 +49,20 @@ def load_config():
         default=None,
         help="Seconds between queue condition checks",
     )
+    parser.add_argument(
+        "--notify-on-completion",
+        dest="notify_on_completion",
+        action="store_true",
+        default=None,
+        help="Send notification when command completes (default: True)",
+    )
+    parser.add_argument(
+        "--no-notify",
+        "--no-notify-on-completion",
+        dest="notify_on_completion",
+        action="store_false",
+        help="Do not send notification when command completes",
+    )
 
     args = parser.parse_args()
 
@@ -58,6 +72,9 @@ def load_config():
     enable_log = args.log
     show_disk = args.show_disk
     enable_cpu_temperature_alert = True
+    notify_on_completion = True
+    if args.notify_on_completion is not None:
+        notify_on_completion = args.notify_on_completion
     queue_until = args.queue_until
     queue_check_interval = args.queue_check_interval
 
@@ -87,6 +104,13 @@ def load_config():
                         enable_cpu_temperature_alert = _as_bool(
                             settings.get("enable_cpu_temperature_alert")
                         )
+                    if (
+                        args.notify_on_completion is None
+                        and "notify_on_completion" in settings
+                    ):
+                        notify_on_completion = _as_bool(
+                            settings.get("notify_on_completion")
+                        )
                     if queue_until is None:
                         queue_until = settings.get("queue_until")
                     if queue_check_interval is None:
@@ -115,6 +139,13 @@ def load_config():
                         enable_cpu_temperature_alert = ini_config[
                             "Settings"
                         ].getboolean("enable_cpu_temperature_alert")
+                    if (
+                        args.notify_on_completion is None
+                        and ini_config["Settings"].get("notify_on_completion")
+                    ):
+                        notify_on_completion = ini_config[
+                            "Settings"
+                        ].getboolean("notify_on_completion")
                     if queue_until is None:
                         queue_until = ini_config["Settings"].get("queue_until")
                     if queue_check_interval is None:
@@ -140,6 +171,14 @@ def load_config():
     if not show_disk and os.environ.get("TELEWRAPPERZ_SHOW_DISK"):
         show_disk = _as_bool(os.environ.get("TELEWRAPPERZ_SHOW_DISK"))
 
+    if (
+        args.notify_on_completion is None
+        and os.environ.get("TELEWRAPPERZ_NOTIFY_ON_COMPLETION") is not None
+    ):
+        notify_on_completion = _as_bool(
+            os.environ.get("TELEWRAPPERZ_NOTIFY_ON_COMPLETION")
+        )
+
     if queue_until:
         from telewrapperz.queue import validate_condition
 
@@ -156,4 +195,5 @@ def load_config():
         queue_until,
         max(0.1, float(queue_check_interval)),
         show_disk,
+        notify_on_completion,
     )

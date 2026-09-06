@@ -1,7 +1,7 @@
 # TODO
 
 - [ ] Add allowed command profiles in YAML config with Telegram buttons to launch them, preventing arbitrary shell execution.
-- [ ] Send a final completion notification for success or error including duration, exit code, tail lines, and attached log file on failure.
+- [x] Send a final completion notification for success or error including duration, exit code, tail lines, and attached log file on failure.
 - [ ] Store local history of recent runs: command, status, duration, and log download.
 - [ ] Queue incoming commands when a process is already running.
 - [ ] Add `telewrapperz init` to generate configuration and verify token and chat ID.

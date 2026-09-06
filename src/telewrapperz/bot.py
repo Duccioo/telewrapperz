@@ -29,6 +29,7 @@ class TeleWrapperzBot:
         queue_check_interval=None,
         start_process=None,
         show_disk=False,
+        enable_completion_notification=True,
     ):
         self.token = token
         self.chat_id = chat_id
@@ -39,6 +40,8 @@ class TeleWrapperzBot:
         self.log_file_path = log_file_path
         self.enable_cpu_temperature_alert = enable_cpu_temperature_alert
         self.cpu_temperature_alert_sent = False
+        self.enable_completion_notification = enable_completion_notification
+        self.completion_notification_sent = False
         self.queue_until = queue_until
         self.queue_check_interval = queue_check_interval or update_interval
         self.start_process = start_process
@@ -307,6 +310,137 @@ class TeleWrapperzBot:
                 )
                 self.queue_notification_sent = True
 
+    def get_completion_keyboard(self):
+        """Generates inline keyboard for job completion notification."""
+        pfx = f"{self.session_id}"
+        buttons = []
+        if self.log_file_path and os.path.exists(self.log_file_path):
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        "📄 Download Log",
+                        callback_data=f"download_log:{pfx}",
+                    )
+                ]
+            )
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "❌ Close Wrapper",
+                    callback_data=f"exit:{pfx}",
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(buttons)
+
+    def build_completion_text(self):
+        """Constructs text for the job completion notification."""
+        now = datetime.now()
+        duration = str(now - self.start_time).split(".")[0]
+        now_time = now.strftime("%H:%M:%S")
+        return_code = getattr(self.process_manager, "return_code", None)
+
+        if return_code == 0:
+            title = "✅ <b>Job Completed Successfully!</b>"
+            status_text = "✅ Success (Exit: 0)"
+        else:
+            title = "❌ <b>Job Failed!</b>"
+            status_text = f"❌ Error (Exit: {return_code})"
+
+        safe_hostname = html.escape(self.hostname)
+        safe_command = html.escape(self.command)
+
+        raw_logs = (
+            self.process_manager.log_buffer.get_lines().rstrip("\n")
+            if hasattr(self.process_manager, "log_buffer")
+            else ""
+        )
+        clean_logs = strip_ansi(raw_logs)
+
+        header = (
+            f"{title}\n\n"
+            f"🖥 <b>{safe_hostname}</b> (PID: {self.pid})\n"
+            f"⚙️ <code>{safe_command}</code>\n\n"
+            f"Status: {status_text}\n"
+            f"⏱️ Duration: {duration}\n"
+            f"🕒 Finished at: {now_time}\n"
+        )
+
+        lines = [line for line in clean_logs.splitlines() if line.strip()]
+        tail_lines = "\n".join(lines[-10:]) if lines else ""
+
+        if tail_lines:
+            header += "\n📜 <b>Recent Log:</b>\n"
+            safe_logs = html.escape(tail_lines)
+            max_len = 4096
+            overhead = len(header) + len("<pre></pre>") + 20
+            available_chars = max_len - overhead
+            if len(safe_logs) > available_chars:
+                trunc_msg = "\n...[truncated]...\n"
+                keep_len = available_chars - len(trunc_msg)
+                if keep_len > 0:
+                    safe_logs = trunc_msg + safe_logs[-keep_len:]
+                else:
+                    safe_logs = trunc_msg
+            return f"{header}<pre>{safe_logs}</pre>"
+
+        return header
+
+    async def notify_completion(self, bot_api):
+        if not self.enable_completion_notification:
+            return False
+        if self.completion_notification_sent:
+            return False
+        if not getattr(self.process_manager, "has_started", False):
+            return False
+        if getattr(self.process_manager, "is_running", False):
+            return False
+        if getattr(self.process_manager, "return_code", None) is None:
+            return False
+
+        self.completion_notification_sent = True
+
+        msg_text = self.build_completion_text()
+        keyboard = self.get_completion_keyboard()
+
+        try:
+            await bot_api.send_message(
+                chat_id=self.chat_id,
+                text=msg_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+        except Exception as e:
+            print(f"Failed to send completion notification: {e}")
+
+        if (
+            self.process_manager.return_code != 0
+            and self.log_file_path
+            and os.path.exists(self.log_file_path)
+        ):
+            try:
+                with open(self.log_file_path, "rb") as f:
+                    await bot_api.send_document(
+                        chat_id=self.chat_id,
+                        document=f,
+                        filename=os.path.basename(self.log_file_path),
+                        caption=f"📄 Failure Log: {os.path.basename(self.log_file_path)}",
+                    )
+            except Exception as e:
+                print(f"Failed to send failure log document: {e}")
+
+        return True
+
+    async def check_completion(self, bot_api):
+        if (
+            self.enable_completion_notification
+            and not self.completion_notification_sent
+            and getattr(self.process_manager, "has_started", False)
+            and not getattr(self.process_manager, "is_running", False)
+            and getattr(self.process_manager, "return_code", None) is not None
+        ):
+            await self.notify_completion(bot_api)
+
     async def telegram_updater(self, app):
         """Background task to update dashboard message periodically."""
         try:
@@ -336,6 +470,7 @@ class TeleWrapperzBot:
                 _, _, cpu_temp, _ = self.system_monitor.get_stats()
                 await self.check_queue_condition(app.bot)
                 await self.notify_cpu_temperature(app.bot, cpu_temp)
+                await self.check_completion(app.bot)
                 if self.dashboard_message_id:
                     await self.update_dashboard_message(app.bot)
 
